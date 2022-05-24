@@ -3,7 +3,7 @@
 ```
 python main_finetune.py \
     --data_path path/to/data \
-    --nb_classes 9\
+    --nb_classes 9 \
     --output_dir path/to/ouput/dir \
     --log_dir path/to/log/dir \
     --batch_size 128 \
