@@ -7,6 +7,7 @@
 # References:
 # DeiT: https://github.com/facebookresearch/deit
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
+# MAE: https://github.com/facebookresearch/mae
 # --------------------------------------------------------
 
 import math
@@ -20,9 +21,15 @@ from timm.utils import accuracy
 
 import util.misc as misc
 import util.lr_sched as lr_sched
-from sklearn import metrics
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+import torch.nn.functional as F
+import numpy
 import numpy as np
+from torchmetrics import Specificity, AUROC
+
+
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
@@ -54,7 +61,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             samples, targets = mixup_fn(samples, targets)
 
         with torch.cuda.amp.autocast():
-            outputs = model(samples) #[batch_size, class_num]
+            outputs = model(samples)
             loss = criterion(outputs, targets)
 
         loss_value = loss.item()
@@ -95,6 +102,29 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
+def confusion_m(y_true, y_pred):
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    return tn, fp, fn, tp
+
+def compute_metrics_binary(probs, preds, targets):
+    auc = roc_auc_score(targets, probs) * 100  
+    precision = precision_score(targets, preds) * 100
+    recall = recall_score(targets, preds) * 100
+    f1 = f1_score(targets, preds) * 100
+    tn, fp, fn, tp = confusion_m(targets, preds)
+    specificity = (tn / float(tn+fp)) * 100
+    return auc, precision, recall, f1, specificity
+
+def compute_metrics_multiclass(probs, preds, targets, nb_classes):
+    preds_tensor, probs_tensor, targets_tensor = torch.tensor(preds), torch.tensor(probs), torch.tensor(targets)
+    auroc = AUROC(average='macro', num_classes=nb_classes)
+    auc = auroc(probs_tensor, targets_tensor) * 100
+    precision = precision_score(targets, preds, average='macro') * 100
+    recall = recall_score(targets, preds, average='macro') * 100
+    f1 = f1_score(targets, preds, average='macro') * 100
+    speci = Specificity(average='macro', num_classes=nb_classes)
+    specificity = speci(preds_tensor, targets_tensor) * 100
+    return auc, precision, recall, f1, specificity
 
 @torch.no_grad()
 def evaluate(data_loader, model, device, nb_classes):
@@ -105,9 +135,10 @@ def evaluate(data_loader, model, device, nb_classes):
 
     # switch to evaluation mode
     model.eval()
-    pred_score_net = []
-    target_net = []
-    pred_net = []
+    probs = []
+    targets = []
+    preds = []
+
     for batch in metric_logger.log_every(data_loader, 10, header):
         images = batch[0]
         target = batch[-1]
@@ -118,40 +149,35 @@ def evaluate(data_loader, model, device, nb_classes):
         with torch.cuda.amp.autocast():
             output = model(images)
             loss = criterion(output, target)
-        
         output = m(output)
         score, pred = output.topk(1, 1, True, True)
-        if nb_classes < 5:
-            acc1, acc5 = accuracy(output, target, topk=(1,1))
-            
-        else:
-            acc1, acc5 = accuracy(output, target, topk=(1, 5)) 
         if nb_classes == 2:
-            pred_score = output[:,1]
+            prob = output[:, 1]
+        elif nb_classes > 2:
+            prob = output
+            
+        probs.extend(prob.detach().cpu().numpy())
+        targets.extend(target.detach().cpu().numpy())
+        preds.extend(pred.tolist())
+        if nb_classes < 5:
+            acc1, acc5 = accuracy(output, target, topk=(1, 1))
         else:
-            pred_score = output
-        pred = pred.squeeze()
-        pred_score_net += pred_score.tolist()
-        pred_net += pred.tolist()
-        target_net += target.tolist()
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+
         batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-
     # gather the stats from all processes
-    acc = metrics.accuracy_score(target_net, pred_net)
-    if nb_classes == 2:
-        auc = metrics.roc_auc_score(target_net, pred_score_net)
-    else:
-        target_net = np.array(target_net).reshape(-1, 1)
-        target_net = OneHotEncoder(sparse=False).fit_transform(target_net)
-         
-        auc = metrics.roc_auc_score(target_net, pred_score_net, average='weighted', multi_class='ovr')
-    metric_logger.meters['auc'].update(auc, n=batch_size)
-    metric_logger.meters['acc'].update(acc, n=batch_size)
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f} acc {acc:.3f} auc {auc:.3f}'
-          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss, acc=acc, auc=auc))
+    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    if nb_classes == 2:
+        print("binary class metrics!")
+        auc, precision, recall, f1, specificity = compute_metrics_binary(probs, preds, targets)
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    elif nb_classes > 2:
+        print("multi_class metrics!")
+        auc, precision, recall, f1, specificity = compute_metrics_multiclass(probs, preds, targets, nb_classes)
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}, auc, precision, recall, f1, specificity

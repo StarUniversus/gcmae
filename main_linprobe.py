@@ -68,7 +68,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # * Finetuning params
-    parser.add_argument('--finetune', default='path/to/pth/path',
+    parser.add_argument('--finetune', default=' ',
                         help='finetune from checkpoint')
     parser.add_argument('--global_pool', action='store_true')
     parser.set_defaults(global_pool=False)
@@ -90,7 +90,7 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--resume', default=' ',
+    parser.add_argument('--resume', default='',
                         help='resume from checkpoint')
 
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -266,8 +266,8 @@ def main(args):
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device, args.nb_classes)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device, args.nb_classes)
+        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.2f}%, AUC:{auc:.2f}%, precision {precision:.2f}%, recall {recall:.2f}%, f1_score {f1:.2f}%, specificity {specificity:.2f}%")
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
@@ -288,17 +288,16 @@ def main(args):
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
 
-        test_stats = evaluate(data_loader_val, model, device, args.nb_classes)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device, args.nb_classes)
+        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.2f}%, AUC: {auc:.2f}%, precision {precision:.2f}%, recall {recall:.2f}%, f1_score {f1:.2f}%, specificity {specificity:.2f}%")
         max_accuracy = max(max_accuracy, test_stats["acc1"])
-        print(f'Max accuracy: {max_accuracy:.2f}%')
+        max_auc = max(max_auc, auc)
+        print(f'Max accuracy: {max_accuracy:.2f}%, Max AUC: {max_auc:.2f}%')
 
         if log_writer is not None:
             log_writer.add_scalar('perf/test_acc1', test_stats['acc1'], epoch)
             log_writer.add_scalar('perf/test_acc5', test_stats['acc5'], epoch)
             log_writer.add_scalar('perf/test_loss', test_stats['loss'], epoch)
-            log_writer.add_scalar('perf/acc', test_stats['acc'], epoch)
-            log_writer.add_scalar('perf/auc', test_stats['auc'], epoch)
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         **{f'test_{k}': v for k, v in test_stats.items()},
                         'epoch': epoch,

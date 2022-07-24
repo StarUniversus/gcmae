@@ -120,7 +120,7 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument('--data_path', default=' ', type=str,
                         help='dataset path')
-    parser.add_argument('--nb_classes', default=9, type=int,
+    parser.add_argument('--nb_classes', default=2, type=int,
                         help='number of the classification types')
 
     parser.add_argument('--output_dir', default=' ',
@@ -130,7 +130,7 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--resume', default=' ',
+    parser.add_argument('--resume', default='',
                         help='resume from checkpoint')
 
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -305,7 +305,7 @@ def main(args):
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
     if args.eval:
-        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device)
+        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device, args.nb_classes)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.2f}%, AUC:{auc:.2f}%, precision {precision:.2f}%, recall {recall:.2f}%, f1_score {f1:.2f}%, specificity {specificity:.2f}%")
         exit(0)
 
@@ -328,7 +328,7 @@ def main(args):
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
 
-        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device)
+        test_stats, auc, precision, recall, f1, specificity = evaluate(data_loader_val, model, device, args.nb_classes)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.2f}%, AUC: {auc:.2f}%, precision {precision:.2f}%, recall {recall:.2f}%, f1_score {f1:.2f}%, specificity {specificity:.2f}%")
         max_accuracy = max(max_accuracy, test_stats["acc1"])
         max_auc = max(max_auc, auc)
