@@ -44,7 +44,7 @@ This repo is a modification on the [mae repo](https://github.com/facebookresearc
 Distributed under the CC-BY-NC 4.0 License. See [LICENSE](LICENSE) for more information.
 
 ## Citation
-If you find Prov-GigaPath useful for your your research and applications, please cite using this BibTeX:
+If you find GCMAE useful for your your research and applications, please cite using this BibTeX:
 
 ```
 @article{quan2024global,
